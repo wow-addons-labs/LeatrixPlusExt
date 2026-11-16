@@ -1,0 +1,25 @@
+## Interface: 16001
+## Title: LeatrixPlusExt（Leatrix Plus 扩展工具）
+## Notes: 在 Leatrix Plus 菜单中增加“扩展功能*”页：调试控制台、隐藏系统图腾栏、寻求组队位置与筛选、增强自动拾取、已学会物品标记、双击快速标记/信号、自动设置任务焦点、任务 NPC 追踪、移动速度显示和常用游戏设置。
+## Version: 0.1.0
+## Author: Luomo
+## SavedVariables: LeatrixPlusExtDB, Quest2RareScannerDB
+## OptionalDeps: Leatrix_Plus
+## LoadSavedVariablesFirst: true
+## AllowLoadGameType: camelot
+## X-Category: Utility
+
+Core.lua
+Modules\Debug\Debug.lua
+Modules\TotemBar\TotemBar.lua
+Modules\LFGWhere\LFGWhere.lua
+Modules\LFGFilter\LFGFilter.lua
+Modules\QuestFocus\QuestFocus.lua
+Modules\SpeedyAutoLoot\SpeedyAutoLoot.lua
+Modules\AlreadyKnown\AlreadyKnown.lua
+Modules\QuickMark\QuickMark.lua
+Modules\ClientTweaks\ClientTweaks.lua
+Modules\Quest2RareScanner\Locale.lua
+Modules\Quest2RareScanner\Data.lua
+Modules\Quest2RareScanner\Quest2RareScanner.lua
+Modules\Speed\Speed.lua
