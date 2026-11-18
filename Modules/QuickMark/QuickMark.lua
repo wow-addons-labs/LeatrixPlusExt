@@ -1,5 +1,5 @@
 -- LeatrixPlusExt 模块：双击快速标记/信号
--- 双击单位打开标记环；信号动作直接发送一个情境 ping
+-- 双击单位执行信号/标记效果；在队伍或团队中双击空地打开世界标记光柱环
 -- 信号走两步：第一次按下先备好安全按钮和宏，第二次点击优先让按钮接收硬件点击；
 -- 若点击被世界捕获框收到（按钮没拿到），就在捕获回调里对按钮做一次程序化点击补发。
 local addonName, NS = ...
@@ -66,6 +66,31 @@ end
 
 local function inCombat()
     return (InCombatLockdown and InCombatLockdown()) and true or false
+end
+
+-- 世界标记光柱用客户端注册的斜杠命令放置（本客户端是 /wm），只能在队伍或团队中使用。
+-- 命令编号和标记环上的目标标记图标顺序不同，这里把两者对应起来。
+local GROUND_MAP = { 5, 6, 3, 2, 7, 1, 4, 8 }
+
+-- 单人时客户端不允许放置世界光柱
+local function InGroupOrRaid()
+    if type(_G.IsInRaid) == "function" then
+        local ok, inRaid = pcall(_G.IsInRaid)
+        if ok and inRaid then return true end
+    end
+    if type(_G.IsInGroup) == "function" then
+        local ok, inGroup = pcall(_G.IsInGroup)
+        if ok and inGroup then return true end
+    end
+    if type(_G.GetNumPartyMembers) == "function" then
+        local ok, count = pcall(_G.GetNumPartyMembers)
+        if ok and type(count) == "number" and count > 0 then return true end
+    end
+    if type(_G.GetNumRaidMembers) == "function" then
+        local ok, count = pcall(_G.GetNumRaidMembers)
+        if ok and type(count) == "number" and count > 0 then return true end
+    end
+    return false
 end
 
 -- ---------------------------------------------------------------------------
@@ -199,6 +224,14 @@ local function PingCommand()
     return "/ping"
 end
 
+-- 世界光柱的斜杠命令别名由客户端注册（可能是 /wm，也可能是 /worldmarker），
+-- 直接取客户端自己的别名，避免写死的命令名在别的客户端上不存在。
+local function WorldMarkerCommand()
+    local cmd = _G.SLASH_WORLD_MARKER1
+    if type(cmd) == "string" and cmd:find("^/[^%s%c]+$") then return cmd end
+    return "/wm"
+end
+
 
 -- ---------------------------------------------------------------------------
 -- 安全按钮与环形菜单
@@ -264,7 +297,11 @@ function QM:HideRing()
     if self.unitButtons then
         for _, button in ipairs(self.unitButtons) do hideButton(button) end
     end
+    if self.groundButtons then
+        for _, button in ipairs(self.groundButtons) do hideButton(button) end
+    end
     hideButton(self.clearUnitButton)
+    hideButton(self.clearGroundButton)
 end
 
 function QM:HitAnyButton()
@@ -272,7 +309,7 @@ function QM:HitAnyButton()
     local x, y = GetCursorPosition()
     local scale = UIParent:GetEffectiveScale()
     x, y = x / scale, y / scale
-    local list = self.unitButtons
+    local list = (self.mode == "unit") and self.unitButtons or self.groundButtons
     if list then
         local hit2 = HIT_RADIUS * HIT_RADIUS
         for _, button in ipairs(list) do
@@ -284,7 +321,7 @@ function QM:HitAnyButton()
             end
         end
     end
-    local center = self.clearUnitButton
+    local center = (self.mode == "unit") and self.clearUnitButton or self.clearGroundButton
     if center and center:IsShown() then
         local bx, by = center:GetCenter()
         if bx and (x - bx) * (x - bx) + (y - by) * (y - by) <= HIT_RADIUS * HIT_RADIUS then
@@ -329,10 +366,10 @@ local function HandleDirectClick(button)
         local px, py = x, y
         if C_Timer and C_Timer.After then
             C_Timer.After(0, function()
-                if IsEnabled() and not inCombat() then QM:ShowRing(px, py) end
+                if IsEnabled() and not inCombat() then QM:ShowRing("unit", px, py) end
             end)
         else
-            QM:ShowRing(x, y)
+            QM:ShowRing("unit", x, y)
         end
     end
     -- 点击已经交给客户端处理，下一帧再收起，避免多余点击重复触发
@@ -352,6 +389,25 @@ local function SetMacroAction(button, text)
     button:SetAttribute("macrotext1", text)
     button:SetAttribute("type", "macro")
     button:SetAttribute("macrotext", text)
+end
+
+-- 清除全部光柱：优先用客户端注册的清除命令别名；没有别名时退回原生受保护动作
+local function SetClearWorldMarkerAction(button)
+    local cmd = _G.SLASH_CLEAR_WORLD_MARKER1
+    if type(cmd) == "string" and cmd:find("^/[^%s%c]+$") then
+        local lines = {}
+        for index = 1, 8 do
+            lines[index] = cmd .. " " .. index
+        end
+        SetMacroAction(button, table.concat(lines, "\n"))
+        return
+    end
+
+    -- 不设 marker 属性时，「clear」会清除全部光柱
+    button:SetAttribute("type1", "worldmarker")
+    button:SetAttribute("action1", "clear")
+    button:SetAttribute("type", "worldmarker")
+    button:SetAttribute("action", "clear")
 end
 
 -- 创建一个固定宏的点击按钮；宏只在创建时设置一次（和标记环按钮一样）。
@@ -431,6 +487,7 @@ function QM:CreateRing()
     self.directButton = self.pingButton
 
     self.unitButtons = {}
+    self.groundButtons = {}
 
     for index = 1, 8 do
         local angle = math.rad(90 - (index - 1) * 45)
@@ -444,6 +501,15 @@ function QM:CreateRing()
         setMarkerIcon(ub.Icon, index)
         ub:HookScript("OnClick", closeAfterClick)
         self.unitButtons[index] = ub
+
+        local marker = GROUND_MAP[index]
+        local gb = createSecureButton(UIParent, ICON_SIZE, frameLevel)
+        if not gb then self.secureUnavailable = true return false end
+        SetMacroAction(gb, WorldMarkerCommand() .. " " .. marker)
+        gb:SetPoint("CENTER", ring, "CENTER", px, py)
+        setMarkerIcon(gb.Icon, index)
+        gb:HookScript("OnClick", closeAfterClick)
+        self.groundButtons[index] = gb
     end
 
     local cu = createSecureButton(UIParent, ICON_SIZE, frameLevel)
@@ -461,6 +527,20 @@ function QM:CreateRing()
     cu:HookScript("OnClick", closeAfterClick)
     self.clearUnitButton = cu
 
+    local cg = createSecureButton(UIParent, ICON_SIZE, frameLevel)
+    if not cg then self.secureUnavailable = true return false end
+    SetClearWorldMarkerAction(cg)
+    cg:SetPoint("CENTER", ring, "CENTER", 0, 0)
+    cg.Icon:SetTexture("Interface\\Buttons\\UI-RefreshButton")
+    cg:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("清除全部世界光柱")
+        GameTooltip:Show()
+    end)
+    cg:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    cg:HookScript("OnClick", closeAfterClick)
+    self.clearGroundButton = cg
+
     return true
 end
 
@@ -470,7 +550,7 @@ function QM:HoveredIndex()
     local x, y = GetCursorPosition()
     local scale = UIParent:GetEffectiveScale()
     x, y = x / scale, y / scale
-    local list = self.unitButtons
+    local list = (self.mode == "unit") and self.unitButtons or self.groundButtons
     if not list then return nil end
     local hit2 = HIT_RADIUS * HIT_RADIUS
     for index, button in ipairs(list) do
@@ -487,7 +567,7 @@ function QM:OnUpdate(elapsed)
     local now = GetTime()
     if now - self.openedAt > AUTO_CLOSE_SECONDS then self:HideRing(); return end
 
-    local list = self.unitButtons
+    local list = (self.mode == "unit") and self.unitButtons or self.groundButtons
     if not list then return end
 
     if self.openAnimation then
@@ -497,7 +577,7 @@ function QM:OnUpdate(elapsed)
             button:SetAlpha(0.3 + 0.7 * eased)
             button:EnableMouse(true)
         end
-        local center = self.clearUnitButton
+        local center = (self.mode == "unit") and self.clearUnitButton or self.clearGroundButton
         if center then
             center:SetAlpha(eased)
             center:EnableMouse(true)
@@ -521,8 +601,9 @@ function QM:OnUpdate(elapsed)
     end
 end
 
-function QM:ShowRing(x, y)
+function QM:ShowRing(mode, x, y)
     if inCombat() or not IsEnabled() then return end
+    if mode == "ground" and not InGroupOrRaid() then return end
     if not self:CreateRing() then return end
     self:HideRing()
 
@@ -533,11 +614,18 @@ function QM:ShowRing(x, y)
     self.ring:SetPoint("CENTER", UIParent, "BOTTOMLEFT", uiX, uiY)
     self.ring:Show()
 
-    self.mode = "unit"
-    self.title:SetText("目标")
+    self.mode = mode
+    self.title:SetText(mode == "unit" and "目标" or "光柱")
 
-    local list = self.unitButtons
-    local center = self.clearUnitButton
+    local list = (mode == "unit") and self.unitButtons or self.groundButtons
+    local otherList = (mode == "unit") and self.groundButtons or self.unitButtons
+    local center = (mode == "unit") and self.clearUnitButton or self.clearGroundButton
+    local otherCenter = (mode == "unit") and self.clearGroundButton or self.clearUnitButton
+
+    if otherList then
+        for _, button in ipairs(otherList) do hideButton(button) end
+    end
+    hideButton(otherCenter)
 
     for _, button in ipairs(list) do
         button:SetAlpha(0.25)
@@ -753,7 +841,7 @@ function QM:WorldMouseDown(button)
         local ok, onUnit = pcall(UnitExists, "mouseover")
         onUnit = ok and onUnit or false
 
-        -- 所有效果都只对单位生效；双击空地不做任何事。
+        -- 双击单位：执行所选效果；双击空地：在队伍或团队中打开世界光柱环。
         -- 第二次点击能走到这里，说明它没落在隐藏按钮上（原地双击时客户端常用
         -- 缓存的鼠标焦点，按钮经常收不到这次点击）。这里直接用程序化点击执行
         -- 第一次按下时准备好的宏；执行完立刻收掉按钮，避免这次点击的抬起
@@ -772,12 +860,16 @@ function QM:WorldMouseDown(button)
                 pcall(button.Click, button)
                 self:DisarmPing()
             end
-        elseif onUnit and effect and effect.ring and self:CreateRing() then
-            -- 点环上按钮前先把双击时的单位锁成 target
-            if self.targetLocker then
-                pcall(self.targetLocker.Click, self.targetLocker)
+        elseif onUnit then
+            if effect and effect.ring and self:CreateRing() then
+                -- 点环上按钮前先把双击时的单位锁成 target
+                if self.targetLocker then
+                    pcall(self.targetLocker.Click, self.targetLocker)
+                end
+                self.pendingOpen = { mode = "unit", x = x, y = y, at = now }
             end
-            self.pendingOpen = { x = x, y = y, at = now }
+        elseif InGroupOrRaid() and self:CreateRing() then
+            self.pendingOpen = { mode = "ground", x = x, y = y, at = now }
         end
     else
         self.lastClickAt, self.lastX, self.lastY = now, x, y
@@ -832,10 +924,10 @@ function QM:WorldMouseUp(button)
     if C_Timer then
         C_Timer.After(0, function()
             if inCombat() or not IsEnabled() then return end
-            QM:ShowRing(pending.x, pending.y)
+            QM:ShowRing(pending.mode or "unit", pending.x, pending.y)
         end)
     else
-        self:ShowRing(pending.x, pending.y)
+        self:ShowRing(pending.mode or "unit", pending.x, pending.y)
     end
 end
 
@@ -969,7 +1061,9 @@ end
 local MODULE_TIP = "双击单位执行所选效果，可选"
     .. " 信号 + 默认标记 / 信号 / 信号 + 标记环 / 默认标记 / 标记环。"
     .. "默认双击、Alt + 双击、Ctrl + 双击、Shift + 双击四个槽位各自独立配置。"
-    .. "双击空地不触发任何效果；标记环单击空地、再次双击或 8 秒后自动关闭，战斗中不可用。"
+    .. "在队伍或团队中双击空地会打开世界标记光柱环，点选后把光柱放到双击的位置；"
+    .. "不在队伍或团队中时不响应。"
+    .. "标记环单击空地、再次双击或 8 秒后自动关闭，战斗中不可用。"
     .. "\n\n右侧齿轮可设置四个双击槽位的效果和“默认标记”使用的标记。"
 
 -- 设置页顶部不再放功能说明，只在信号系统关闭时显示红色警告

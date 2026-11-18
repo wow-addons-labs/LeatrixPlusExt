@@ -1097,13 +1097,14 @@ local MODULE_ROW_STEP = 26
 -- 按功能分组（只影响排列顺序，页面不显示分类标题）：
 -- 组内按列补位；没有列进分组的新模块接在最后。
 local MODULE_GROUPS = {
-    { "任务",       { "questFocusOnKill", "quest2RareScanner" } },
+    { "任务",       { "questFocusOnKill", "quest2RareScanner", "nameplateQuestProgress",
+                      "questItemCleanup" } },
     { "组队",       { "lfgWhere", "lfgFilter" } },
-    { "拾取与物品", { "speedyAutoLoot", "alreadyKnown" } },
-    { "界面",       { "hideSystemTotemBar", "showPlayerSpeed" } },
-    -- 条目数为奇数的组放最后，空出来的格子落在底部，不会卡在中间
+    { "拾取与物品", { "speedyAutoLoot", "alreadyKnown", "showItemLevel" } },
     { "战斗与画面", { "questItemHighlight", "nameplateDistance",
                       "worldTextScale", "quickMark" } },
+    -- 条目数为奇数的组放最后，空出来的格子落在底部，不会卡在中间
+    { "界面",       { "hideSystemTotemBar", "showPlayerSpeed", "autoRankReplace" } },
 }
 
 -- 算出每个入口所在的行/列；隐藏的入口不占位置。
@@ -1931,7 +1932,7 @@ SlashCmdList["LEATRIXPLUSEXT"] = function(message)
     local full = tostring(message or ""):lower():match("^%s*(.-)%s*$")
     local command, argument = full:match("^(%S+)%s*(.-)$")
 
-    -- /lpext diag [layout|lfg|lfgfilter|lfgacts|questfocus|q2rs|minimap]：诊断窗口
+    -- /lpext diag [layout|lfg|lfgfilter|lfgacts|questfocus|q2rs|questitemcleanup|minimap]：诊断窗口
     -- 不带参数时查看接入诊断；结果放在可复制的窗口里，方便整段复制
     if command == "diag" then
         local module = (argument ~= "" and argument) or "layout"
@@ -1964,6 +1965,14 @@ SlashCmdList["LEATRIXPLUSEXT"] = function(message)
             else
                 print("|cff66ccffLeatrixPlusExt|r 寻求组队位置模块还没有加载。")
             end
+        elseif module == "questitemcleanup" then
+            if type(ns.DiagnoseQuestItemCleanup) == "function" then
+                local lines = ns.DiagnoseQuestItemCleanup()
+                ShowDiagnosticWindow("LeatrixPlusExt 任务物品标记诊断",
+                    table.concat(lines or {}, "\n"))
+            else
+                print("|cff66ccffLeatrixPlusExt|r 标记多余的任务物品模块还没有加载。")
+            end
         elseif module == "questfocus" then
             -- 自动设置任务焦点的状态诊断
             if type(ns.DiagnoseQuestFocus) == "function" then
@@ -1982,7 +1991,7 @@ SlashCmdList["LEATRIXPLUSEXT"] = function(message)
             end
         else
             print("|cff66ccffLeatrixPlusExt|r 未知诊断模块：" .. tostring(module)
-                .. "（可用：layout / lfg / lfgfilter / lfgacts / questfocus / q2rs / minimap）")
+                .. "（可用：layout / lfg / lfgfilter / lfgacts / questfocus / q2rs / questitemcleanup / minimap）")
         end
         return
     end
