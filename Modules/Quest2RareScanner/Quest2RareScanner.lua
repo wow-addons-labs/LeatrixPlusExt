@@ -1811,7 +1811,7 @@ PrintHelp = function()
         NS.Q2RSZoneDB and L.READY or L.NOT_READY
     ))
     if not IsEnabled() then
-        Print("模块当前未启用：在「扩展功能*」页勾选「任务 NPC 追踪」。")
+        Print("模块当前未启用：在「扩展功能A」页勾选「任务 NPC 追踪」。")
     end
 end
 

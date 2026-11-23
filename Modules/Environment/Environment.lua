@@ -417,7 +417,6 @@ NS.RegisterModule({
     key = "showEnvironment",
     section = "系统界面",
     label = "显示当前环境",
-    bottomRow = true,
     tip = "在小地图坐标下方显示当前区域的环境类型，例如沙漠、雪地、森林/草原。\n\n一个区域可能同时属于多种环境，会用「·」分隔。",
     default = true,
     onToggle = function(enabled)

@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: LeatrixPlusExt（Leatrix Plus 扩展工具）
-## Notes: 在 Leatrix Plus 菜单中增加“扩展功能*”页：调试控制台、隐藏系统图腾栏、寻求组队位置与筛选、增强自动拾取、已学会/不可用物品标记、背包和装备栏物品等级、双击快速标记/信号、自动设置任务焦点、任务 NPC 追踪、姓名板任务进度、标记多余的任务物品、自动替换低级技能、移动速度、区域环境显示和常用游戏设置。
-## Version: 0.2.0
+## Notes: 在 Leatrix Plus 菜单中增加“扩展功能A*”“扩展功能B*”两个页：调试控制台、隐藏系统图腾栏、寻求组队位置与筛选、增强自动拾取、已学会/不可用物品标记、背包和装备栏物品等级、快速标记/信号、商人批量购买、自动设置任务焦点、任务 NPC 追踪、姓名板任务进度、姓名板显示距离、标记多余的任务物品、队伍拾取显示人数、自动替换低级技能、移动速度、区域环境显示和常用游戏设置。
+## Version: 0.3.0
 ## Author: Luomo
 ## SavedVariables: LeatrixPlusExtDB, Quest2RareScannerDB
 ## OptionalDeps: Leatrix_Plus, Questie, QuestieDB
@@ -26,6 +26,9 @@ Modules\Speed\Speed.lua
 Modules\Environment\Data.lua
 Modules\Environment\Environment.lua
 Modules\QuestNameplate\QuestNameplate.lua
+Modules\NameplateRange\NameplateRange.lua
 Modules\QuestItemCleanup\QuestItemCleanup.lua
 Modules\AutoRankReplace\AutoRankReplace.lua
 Modules\ItemLevel\ItemLevel.lua
+Modules\GroupLootCounts\GroupLootCounts.lua
+Modules\BulkBuy\BulkBuy.lua

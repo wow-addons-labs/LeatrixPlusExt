@@ -1,7 +1,7 @@
 -- LeatrixPlusExt：Leatrix Plus 扩展工具（核心）
 -- 不修改 Leatrix Plus，也不依赖 debug 库。
 -- 通过识别 Leatrix Plus 主面板（570x370，标题 Leatrix Plus）和它的导航按钮，
--- 在运行时挂一个「扩展功能*」页与导航项（位于 Settings 之前）。
+-- 在运行时挂「扩展功能A*」「扩展功能B*」两个页与导航项（位于 Settings 之前）。
 -- 具体功能位于 Modules/<功能名>/，通过 ns.RegisterModule 注册选项行与齿轮配置页。
 
 local addonName, ns = ...
@@ -13,13 +13,16 @@ if type(DB) ~= "table" then
 end
 
 local panel          -- Leatrix Plus 主面板
-local extensionPage  -- 扩展页 frame
-local extensionNav   -- 扩展导航按钮
+local extensionPage  -- 扩展页容器（整页，包含 A/B 两个页签）
+local extensionNav   -- 第一个扩展导航按钮
 local extensionReady = false
 local initMessageShown = false
 
 local extensionModules = {}
 local modulePanels = {}
+-- [页签 key] = { key, title, navLabel, page, nav, selected }
+local extensionTabs = {}
+local activeExtensionTab = "A"
 
 
 -- ---------------------------------------------------------------------------
@@ -1094,22 +1097,47 @@ local BOTTOM_ROW_Y = -282
 local MODULE_ROW_START_Y = -72
 local MODULE_ROW_STEP = 26
 
--- 按功能分组（只影响排列顺序，页面不显示分类标题）：
--- 组内按列补位；没有列进分组的新模块接在最后。
+-- 功能按页签分组（只影响排列顺序，页面不显示分类标题）：
+-- 组内按列补位；没有列进分组的新模块接在所属页签的最后。
 local MODULE_GROUPS = {
-    { "任务",       { "questFocusOnKill", "quest2RareScanner", "nameplateQuestProgress",
-                      "questItemCleanup" } },
-    { "组队",       { "lfgWhere", "lfgFilter" } },
-    { "拾取与物品", { "speedyAutoLoot", "alreadyKnown", "showItemLevel" } },
-    { "战斗与画面", { "questItemHighlight", "nameplateDistance",
-                      "worldTextScale", "quickMark" } },
-    -- 条目数为奇数的组放最后，空出来的格子落在底部，不会卡在中间
-    { "界面",       { "hideSystemTotemBar", "showPlayerSpeed", "autoRankReplace" } },
+    A = {
+        { "任务",       { "questFocusOnKill", "quest2RareScanner", "nameplateQuestProgress",
+                          "questItemCleanup" } },
+        { "组队",       { "lfgWhere", "lfgFilter" } },
+        { "拾取与物品", { "speedyAutoLoot", "alreadyKnown", "showItemLevel",
+                          "groupLootCounts", "bulkBuy" } },
+    },
+    B = {
+        { "战斗与画面", { "questItemHighlight", "nameplateDistance", "nameplateRange",
+                          "worldTextScale", "quickMark" } },
+        -- 条目数为奇数的组放最后，空出来的格子落在底部，不会卡在中间
+        { "界面",       { "hideSystemTotemBar", "showPlayerSpeed", "autoRankReplace",
+                          "showEnvironment", "debugEnabled" } },
+    },
 }
 
--- 算出每个入口所在的行/列；隐藏的入口不占位置。
+local DEFAULT_MODULE_PAGE = "A"
+
+-- 模块所属页签：模块可以用 page = "A"/"B" 明确指定，否则按分组表判断
+local function GetModuleTab(module)
+    if module.page == "A" or module.page == "B" then
+        return module.page
+    end
+    for tabKey, groups in pairs(MODULE_GROUPS) do
+        for _, group in ipairs(groups) do
+            for _, entry in ipairs(group[2]) do
+                if entry == module or entry == module.key then
+                    return tabKey
+                end
+            end
+        end
+    end
+    return DEFAULT_MODULE_PAGE
+end
+
+-- 算出某个页签里每个入口所在的行/列；隐藏的入口不占位置。
 -- 上一组只占了左半格时，下一组直接补满这一行，避免右侧留空。
-local function ComputeModuleLayout()
+local function ComputeModuleLayout(tabKey)
     local layout = {}
     local row, col = 0, 0
 
@@ -1117,7 +1145,8 @@ local function ComputeModuleLayout()
         for _, entry in ipairs(entries) do
             local module = type(entry) == "string" and FindModule(entry) or entry
             if type(module) == "table" and not module.bottomRow
-                and not layout[module] and ModuleEntryVisible(module) then
+                and not layout[module] and ModuleEntryVisible(module)
+                and GetModuleTab(module) == tabKey then
                 layout[module] = { col = col, row = row }
                 col = col + 1
                 if col >= 2 then
@@ -1127,14 +1156,14 @@ local function ComputeModuleLayout()
         end
     end
 
-    for _, group in ipairs(MODULE_GROUPS) do
+    for _, group in ipairs(MODULE_GROUPS[tabKey] or {}) do
         AddGroup(group[2])
     end
 
-    -- 没列进分组的模块按注册顺序接在最后
+    -- 没列进分组的模块按注册顺序接在这个页签的最后
     local rest = {}
     for _, module in ipairs(extensionModules) do
-        if not module.bottomRow then
+        if not module.bottomRow and GetModuleTab(module) == tabKey then
             rest[#rest + 1] = module
         end
     end
@@ -1143,10 +1172,13 @@ local function ComputeModuleLayout()
 end
 
 local function GetModulePosition(module)
+    local tabKey = GetModuleTab(module)
+
     if module.bottomRow then
         local bottomIndex = 0
         for _, existing in ipairs(extensionModules) do
-            if existing.bottomRow and ModuleEntryVisible(existing) then
+            if existing.bottomRow and ModuleEntryVisible(existing)
+                and GetModuleTab(existing) == tabKey then
                 bottomIndex = bottomIndex + 1
             end
             if existing == module then break end
@@ -1155,7 +1187,7 @@ local function GetModulePosition(module)
         return column == 0 and 146 or 340, BOTTOM_ROW_Y
     end
 
-    local slot = ComputeModuleLayout()[module]
+    local slot = ComputeModuleLayout(tabKey)[module]
     if not slot then
         -- 入口当前不可见，位置无所谓；可见时 RefreshModuleLayout 会重新排
         return 146, MODULE_ROW_START_Y
@@ -1185,10 +1217,14 @@ local function RegisterModule(module)
     module.default = module.default ~= false
     extensionModules[#extensionModules + 1] = module
 
-    -- 页面已建好时支持后续追加
+    -- 页面已建好时支持后续追加到对应页签
     if extensionPage then
-        local x, y = GetModulePosition(module)
-        BuildModuleRow(extensionPage, module, x, y)
+        local tab = extensionTabs[GetModuleTab(module)]
+        if tab and tab.page then
+            local x, y = GetModulePosition(module)
+            BuildModuleRow(tab.page, module, x, y)
+            if RefreshModuleLayout then RefreshModuleLayout() end
+        end
     end
     return module
 end
@@ -1202,72 +1238,59 @@ ns.HideConfigPanel = function(key)
 end
 ns.ShowMainPanel = ShowMainPanel
 
+-- 左侧菜单里的两个扩展页签
+local EXTENSION_TABS = {
+    { key = "A", navLabel = "扩展功能A*", title = "LeatrixPlusExt 扩展功能A" },
+    { key = "B", navLabel = "扩展功能B*", title = "LeatrixPlusExt 扩展功能B" },
+}
+
+-- 导航文字后面的 * 表示这一页由 LeatrixPlusExt 独立提供，不是 Leatrix Plus 自带选项
+local EXTENSION_NAV_TIP = "带 * 的扩展页由 LeatrixPlusExt 独立提供，不属于 Leatrix Plus 自带选项。"
+
 -- 一级页面：标题 + 两列选项（与 Leatrix 页面一致）
-local function BuildExtensionPageBody(parent)
+local function BuildExtensionPageBody(tab)
+    local parent = tab.page
     local title = parent:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 146, -16)
-    title:SetText("LeatrixPlusExt 扩展功能")
+    title:SetText(tab.title)
 
     for _, module in ipairs(extensionModules) do
-        local x, y = GetModulePosition(module)
-        BuildModuleRow(parent, module, x, y)
+        if GetModuleTab(module) == tab.key then
+            local x, y = GetModulePosition(module)
+            BuildModuleRow(parent, module, x, y)
+        end
     end
 end
 
--- ---------------------------------------------------------------------------
--- 挂载扩展页
--- ---------------------------------------------------------------------------
--- 导航文字后面的 * 表示这一页由 LeatrixPlusExt 独立提供，不是 Leatrix Plus 自带选项
-local EXTENSION_NAV_LABEL = "扩展功能*"
-local EXTENSION_NAV_TIP = "带 * 的扩展页由 LeatrixPlusExt 独立提供，不属于 Leatrix Plus 自带选项。"
-
-local function CreateExtensionUI(targetPanel)
-    local navs = GetNavButtons(targetPanel)
-    local navY
-
-    -- Dreadful 的做法：只把最后两个导航下移 10px，在 Settings 之前插入新项，
-    -- 尽量保留 Leatrix 原有的分组间距。
-    local lastY = navs[#navs] and navs[#navs].y
-    local prevY = navs[#navs - 1] and navs[#navs - 1].y
-    local beforeY = navs[#navs - 2] and navs[#navs - 2].y
-    -- 真实 Leatrix 在 Settings 前有 40px 分组间距，才够插入一项；
-    -- 如果只是普通 20px 间距，改用压缩模式，避免和上一项重叠。
-    local surgical = #navs >= 3
-        and type(lastY) == "number" and lastY <= -270
-        and type(prevY) == "number" and type(beforeY) == "number"
-        and math.abs(prevY - beforeY) >= 30
-    if surgical then
-        navY = prevY + 20
-    else
-        navY = -72 - #navs * 20
+-- 只显示当前页签；容器隐藏时两个页面和导航高亮一起隐藏
+local function UpdateTabVisibility()
+    local shown = extensionPage and extensionPage:IsShown()
+    for _, info in ipairs(EXTENSION_TABS) do
+        local tab = extensionTabs[info.key]
+        if tab then
+            local current = shown and activeExtensionTab == info.key
+            tab.page:SetShown(current)
+            if tab.selected then tab.selected:SetShown(current) end
+        end
     end
+end
 
-    extensionPage = CreateFrame("Frame", nil, targetPanel)
-    extensionPage:SetAllPoints(targetPanel)
-    extensionPage:SetFrameLevel((targetPanel:GetFrameLevel() or 1) + 5)
-    extensionPage:Hide()
-
-    -- 先构建页面；失败时不要留下被反复移动的导航
-    local buildOk, buildError = pcall(BuildExtensionPageBody, extensionPage)
-    if not buildOk then
-        extensionPage:Hide()
-        extensionPage = nil
-        error(tostring(buildError), 0)
-    end
-
-    local nav = CreateFrame("Button", nil, targetPanel)
+-- 创建一个页签的左侧导航按钮（与 Leatrix 导航同样的样式）
+local function CreateExtensionNav(parent, tab, y, tooltipFrame, onClick)
+    local nav = CreateFrame("Button", nil, parent)
     nav:SetSize(112, 20)
-    nav:SetPoint("TOPLEFT", targetPanel, "TOPLEFT", 16, navY)
-    nav:SetFrameLevel((targetPanel:GetFrameLevel() or 1) + 10)
+    nav:SetPoint("TOPLEFT", parent, "TOPLEFT", 16, y)
+    nav:SetFrameLevel((parent:GetFrameLevel() or 1) + 10)
 
     local label = nav:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     label:SetPoint("LEFT", 16, 0)
-    label:SetText(EXTENSION_NAV_LABEL)
+    label:SetText(tab.navLabel)
 
     local selected = nav:CreateTexture(nil, "BACKGROUND")
     selected:SetAllPoints()
     selected:SetColorTexture(0.3, 0.3, 0.0, 0.8)
     selected:Hide()
+    tab.selected = selected
 
     local hover = nav:CreateTexture(nil, "BACKGROUND")
     hover:SetAllPoints()
@@ -1275,12 +1298,76 @@ local function CreateExtensionUI(targetPanel)
     hover:Hide()
     nav:SetScript("OnEnter", function(self)
         hover:Show()
-        LeatrixTooltip(self, targetPanel, EXTENSION_NAV_TIP)
+        LeatrixTooltip(self, tooltipFrame, EXTENSION_NAV_TIP)
     end)
     nav:SetScript("OnLeave", function()
         hover:Hide()
         GameTooltip:Hide()
     end)
+    nav:SetScript("OnClick", onClick)
+    return nav
+end
+
+-- 在整页容器里创建两个页签页面并构建选项
+local function BuildExtensionTabs(container)
+    extensionTabs = {}
+    for _, info in ipairs(EXTENSION_TABS) do
+        local page = CreateFrame("Frame", nil, container)
+        page:SetAllPoints(container)
+        page:SetFrameLevel((container:GetFrameLevel() or 1) + 1)
+        page:Hide()
+        local tab = {
+            key = info.key,
+            title = info.title,
+            navLabel = info.navLabel,
+            page = page,
+        }
+        extensionTabs[info.key] = tab
+        BuildExtensionPageBody(tab)
+    end
+    activeExtensionTab = EXTENSION_TABS[1].key
+end
+
+local function CreateExtensionUI(targetPanel)
+    local navs = GetNavButtons(targetPanel)
+
+    -- Dreadful 的做法：在 Settings 之前插入扩展导航，并下移 Settings / Media，
+    -- 尽量保留 Leatrix 原有的分组间距。
+    local lastY = navs[#navs] and navs[#navs].y
+    local prevY = navs[#navs - 1] and navs[#navs - 1].y
+    local beforeY = navs[#navs - 2] and navs[#navs - 2].y
+    -- 真实 Leatrix 在 Settings 前有 40px 分组间距，才够插入两项；
+    -- 如果只是普通 20px 间距，改用压缩模式，避免和上一项重叠。
+    local surgical = #navs >= 3
+        and type(lastY) == "number" and lastY <= -270
+        and type(prevY) == "number" and type(beforeY) == "number"
+        and math.abs(prevY - beforeY) >= 30
+
+    local navYs = {}
+    if surgical then
+        -- 占用 Settings 前面空出来的 40px：A 放在原空位，B 接管 Settings 的位置，
+        -- Settings 和 Media 各下移 20px。
+        navYs[1] = prevY + 20
+        navYs[2] = prevY
+    else
+        -- 压缩模式：所有原有导航按 20px 重新排列，扩展导航接在最后
+        navYs[1] = -72 - #navs * 20
+        navYs[2] = navYs[1] - 20
+    end
+
+    extensionPage = CreateFrame("Frame", nil, targetPanel)
+    extensionPage:SetAllPoints(targetPanel)
+    extensionPage:SetFrameLevel((targetPanel:GetFrameLevel() or 1) + 5)
+    extensionPage:Hide()
+
+    -- 先构建两个页签；失败时不要留下被反复移动的导航
+    local buildOk, buildError = pcall(BuildExtensionTabs, extensionPage)
+    if not buildOk then
+        extensionPage:Hide()
+        extensionPage = nil
+        extensionTabs = {}
+        error(tostring(buildError), 0)
+    end
 
     -- 页面构建成功后再调整原有导航，避免失败重试时反复移动
     if surgical then
@@ -1290,8 +1377,8 @@ local function CreateExtensionUI(targetPanel)
             local point, relativeTo, relativePoint, x, y = SafeMethod(navFrame, "GetPoint", 1)
             if point and type(y) == "number" then
                 navFrame:ClearAllPoints()
-                navFrame:SetPoint(point, relativeTo or targetPanel, relativePoint or point, x or 16, y - 10)
-                info.y = y - 10
+                navFrame:SetPoint(point, relativeTo or targetPanel, relativePoint or point, x or 16, y - 20)
+                info.y = y - 20
             end
         end
     else
@@ -1303,17 +1390,23 @@ local function CreateExtensionUI(targetPanel)
         end
     end
 
-    extensionPage:SetScript("OnShow", function() selected:Show() end)
-    extensionPage:SetScript("OnHide", function() selected:Hide() end)
+    extensionPage:SetScript("OnShow", UpdateTabVisibility)
+    extensionPage:SetScript("OnHide", UpdateTabVisibility)
 
-    nav:SetScript("OnClick", function()
-        HideLeatrixSidePanels(targetPanel)
-        targetPanel:Show()
-        for _, pageFrame in ipairs(GetPageFrames(targetPanel, extensionPage)) do
-            pageFrame:Hide()
-        end
-        extensionPage:Show()
-    end)
+    for index, info in ipairs(EXTENSION_TABS) do
+        local tab = extensionTabs[info.key]
+        tab.nav = CreateExtensionNav(targetPanel, tab, navYs[index], targetPanel, function()
+            HideLeatrixSidePanels(targetPanel)
+            targetPanel:Show()
+            for _, pageFrame in ipairs(GetPageFrames(targetPanel, extensionPage)) do
+                pageFrame:Hide()
+            end
+            activeExtensionTab = info.key
+            extensionPage:Show()
+            UpdateTabVisibility()
+        end)
+    end
+    extensionNav = extensionTabs[EXTENSION_TABS[1].key].nav
 
     -- 原有导航/搜索结果被显示时，隐藏扩展页（比只钩导航点击更稳）
     for _, pageFrame in ipairs(GetPageFrames(targetPanel, extensionPage)) do
@@ -1353,7 +1446,6 @@ local function CreateExtensionUI(targetPanel)
         end
     end)
 
-    extensionNav = nav
     return extensionPage
 end
 
@@ -1381,10 +1473,30 @@ local function CreateStandaloneWindow()
     close:SetPoint("TOPRIGHT", -2, -2)
 
     local note = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    note:SetPoint("TOPLEFT", 16, -16)
+    note:SetPoint("BOTTOMLEFT", 16, 12)
     note:SetText("Leatrix Plus 不可用：独立窗口")
 
-    BuildExtensionPageBody(f)
+    -- 独立窗口没有 Leatrix 的左侧菜单，在这里放一组同样的页签导航
+    local container = CreateFrame("Frame", nil, f)
+    container:SetAllPoints(f)
+    container:SetFrameLevel((f:GetFrameLevel() or 1) + 5)
+
+    local buildOk, buildError = pcall(BuildExtensionTabs, container)
+    if not buildOk then
+        extensionTabs = {}
+        error(tostring(buildError), 0)
+    end
+
+    for index, info in ipairs(EXTENSION_TABS) do
+        local tab = extensionTabs[info.key]
+        tab.nav = CreateExtensionNav(f, tab, -60 - (index - 1) * 20, f, function()
+            activeExtensionTab = info.key
+            UpdateTabVisibility()
+        end)
+    end
+
+    f:SetScript("OnShow", UpdateTabVisibility)
+    f:SetScript("OnHide", UpdateTabVisibility)
     f:Hide()
 
     if UISpecialFrames then
@@ -1420,7 +1532,7 @@ local function TryInitialize(allowFallback)
         panel = targetPanel
         extensionReady = true
         ApplySystemTotemBar()
-        print("|cff66ccffLeatrixPlusExt|r 已就绪：左侧菜单「扩展功能*」，或输入 /lpext 打开。")
+        print("|cff66ccffLeatrixPlusExt|r 已就绪：左侧菜单「扩展功能A*」「扩展功能B*」，或输入 /lpext 打开。")
         return true
     end
 
