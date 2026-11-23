@@ -1,6 +1,6 @@
 -- LeatrixPlusExt 模块：在队伍拾取的按钮上显示已经选择该项的人数
 -- 人数统计与拾取历史配对参考 BetterGroupLoot-1.0（作者 Karl-Heinz Schneider，MIT 许可），
--- 只保留按钮上的数字，不替换原生 roll 框。
+-- 只保留按钮上的数字和悬停提示框，不替换原生 roll 框。
 local _, NS = ...
 
 local DEFAULT = true
